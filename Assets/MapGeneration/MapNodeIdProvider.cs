@@ -1,12 +1,10 @@
-using Scellecs.Morpeh;
-using UnityEngine;
+using Scellecs.Morpeh.Providers;
 using Unity.IL2CPP.CompilerServices;
 
-[System.Serializable]
 [Il2CppSetOption(Option.NullChecks, false)]
 [Il2CppSetOption(Option.ArrayBoundsChecks, false)]
 [Il2CppSetOption(Option.DivideByZeroChecks, false)]
-public struct ComponentMapNodeNeighbours : IComponent 
+public sealed class MapNodeIdProvider : MonoProvider<MapNodeIdComponent> 
 {
-    public byte[] node_neighbours;
+    
 }

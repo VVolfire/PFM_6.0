@@ -2,9 +2,17 @@ using Scellecs.Morpeh;
 using UnityEngine;
 
 [System.Serializable]
-public struct ComponentMapNodeId : IComponent
+public struct MapNodeIdComponent : IComponent
 {
-    public byte node_id;
+    [SerializeField]
+    private int _nodeIdEditor; // ÒÎËÜÊÎ Äëÿ îòîáðàæåíèÿ â èíñïåêòîðå È ÍÈ×ÅÃÎ ÁÎËÜØÅ
+
+    public byte node_id
+    {
+        get => (byte)_nodeIdEditor;
+        set => _nodeIdEditor = value;
+    }
+
     //public MAP_NODE_STATES node_state;
 }
 
