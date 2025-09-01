@@ -5,6 +5,7 @@ using System.Linq;
 using TMPro;
 using Unity.VisualScripting;
 using UnityEngine;
+using UnityEngine.Rendering;
 using static UnityEngine.EventSystems.EventTrigger;
 using static UnityEngine.RuleTile.TilingRuleOutput;
 using Random = UnityEngine.Random;
@@ -20,17 +21,62 @@ public sealed class Scr_MapController : MonoBehaviour {
     public Stash<MapNodePositionComponent> nodePosStash;
     public Stash<MapNodeNeighboursComponent> nodeNeighbStash;
 
+    public Stash<MapBGComponent> bgStash;
+
+    public int whole_map_middle_y_point;
+
+    public int bg_segment_lenght;
+    public int bg_startend_lenght;
+    public int bg_beginning_of_scroll;
+
+    public Sprite bg_big_sprite;
+    public Sprite bg_start_sprite;
+    public Sprite bg_end_sprite;
+    public List<Sprite> bg_segment_sprites;
+
+    //public GameObject UIBGPrefab;
+    //public GameObject UIMapSegmentPrefab;
+    //public GameObject UIMapStartPrefab;
+    //public GameObject UIMapEndPrefab;
+
+    public GameObject bgPrefab;
     public GameObject nodePrefab;
 
-    // collumn count does not include start and end nodes, only path in between
-    private byte collumn_count = 9;
-    // row count represents maximum POSSIBLE amount of rows, but will try to be belowe that point
-    private byte row_count = 4;
-    // map offset is the coordinate offset from screen borders on both sides of screen, from left to start and from right to end
-    private int map_offset = 140;
+    // collumn_count does not include start and end nodes, only path in between
+    public byte collumn_count = 9;
+    // row_count represents maximum POSSIBLE amount of rows (including zero), but will try to be belowe that point
+    public byte row_count = 3;
 
-    private int map_offset_start = 0;
-    private int map_offset_end = 1920;
+    // icon_bounding_box_width this is a bounding box width that is used to check if the icons are colliding
+    public byte icon_bounding_box_width;
+
+    public Material lineMaterial;
+
+    // map_hor_offset is the coordinate offset from screen borders on both horizontal sides of screen, from left to start and from right to end
+    public int map_hor_offset = 130;
+
+    // map_hor_start is a representation of left horizontal border point from which the map "canvas" starts, i.e. a map border
+    public int map_hor_start = 0;
+    // map_hor_dist a distance between collumns
+    public int map_hor_dist = 110; // ----->>>  REMEMBER ABOUT RANDOM HOR OFFSET
+    // map_hor_random_max corresponds to maximum possible horizontal random offset of node in addition to base offset, this mean -N to +N
+    // this end value will be increased by map_hor_random_increase, to get more abrupt change
+    public int map_hor_random_max = 3;
+    public int map_hor_random_increase = 4;
+
+    // map_vert_offset is the coordinate offset from screen borders on both vertical sides of screen
+    public int map_vert_offset = 70;
+
+    // map_vert_start is a representation of upper vertical border point from which the map "canvas" starts, i.e. a map border
+    public int map_vert_start = 0;
+    // map_vert_end same as above but for lower border
+    public int map_vert_end = 1080 / 3; // we use target resolution that is 1080. Our style resolution is 360 |=> Divide by 3 ..... this is here as a reminder
+    // map_vert_random_max corresponds to maximum possible vertical random offset of node in addition to base offset, this mean -N to +N
+    // this end value will be increased by map_vert_random_increase, to get more abrupt change
+    public int map_vert_random_max = 4;
+    public int map_vert_random_increase = 4;
+    // map_vert_pull_strenght is a modifier that increments the end result of difference between correct position of node and its clear position
+    public float map_vert_pull_strenght = 0.7f;
 
     public void Start()
     {
@@ -46,9 +92,11 @@ public sealed class Scr_MapController : MonoBehaviour {
         //var newEntity = newWorld.CreateEntity();
         //newWorld.RemoveEntity(newEntity);
 
-        var newSystem = new MapNodeDrawSystem();
+        var newSystem = new MapDrawSystem();
 
-        newSystem.myPrefab = nodePrefab;
+        newSystem.nodePrefab = nodePrefab;
+        newSystem.bgPrefab = bgPrefab;
+        newSystem.lineMaterial = lineMaterial;
 
         //Debug.Log("made system");
         //newSystem.World = nodeWorld;
@@ -67,23 +115,35 @@ public sealed class Scr_MapController : MonoBehaviour {
 
     public void GenerateMap(byte collumns, byte rows)
     {
-        Debug.Log("MapController is GeneratingMap");
+        //Debug.Log("MapController is GeneratingMap");
 
         nodeIdStash = nodeWorld.GetStash<MapNodeIdComponent>();
         nodePosStash = nodeWorld.GetStash<MapNodePositionComponent>();
         nodeNeighbStash = nodeWorld.GetStash<MapNodeNeighboursComponent>();
 
+        List<Entity> prev_collumn_entities = new List<Entity>();
+        List<Entity> current_collumn_entities = new List<Entity>();
+        List<Entity> next_collumn_entities = new List<Entity>();
+
+
+        int total_lenght = 0;
+
+
 
         // ----------------------------------- First walkthrough - generate nodes and give IDs 
         Debug.LogWarning("----------------------------------- First walkthrough - generate nodes and give IDs");
 
+        #region
         // generation of first node, without any offset
         var entityFirst = nodeWorld.CreateEntity();
+
+        var first_x = map_hor_start + map_hor_offset;
+
         nodeIdStash.Set(entityFirst, new MapNodeIdComponent { node_id = 0 });
         nodePosStash.Set(entityFirst, new MapNodePositionComponent
         {
-            node_x = map_offset_start + map_offset,
-            node_y = 540,
+            node_x = first_x,
+            node_y = map_vert_end/2,
             node_collumn = 0,
             node_row = rows/2
         });
@@ -103,6 +163,7 @@ public sealed class Scr_MapController : MonoBehaviour {
             temp_past_coll[i] = (byte)i;
         }
 
+        int temp_end_x = 0;
         for (byte i = 1; i <= collumns; i++)
         {
             Debug.Log(" ------------------------------------------------ Making Collumn - " + i);
@@ -147,11 +208,12 @@ public sealed class Scr_MapController : MonoBehaviour {
                 // create the entity and set initial values
                 var entity = nodeWorld.CreateEntity();
 
-                //var diff = (map_offset_end-map_offset)-(map_offset_start + map_offset);
+                //var diff = (map_hor_end-map_hor_offset)-(map_hor_start + map_hor_offset);
 
-                var temp_x = (int)(map_offset_start + map_offset + ((map_offset_end - map_offset*3) / collumns) * i);
-                //var temp_x = (int)(map_offset_start + map_offset + (diff / collumns) * i);
-                var temp_y = (int)((1080 / rows) * temp_curr_row);
+                var temp_x = (int)(map_hor_start + map_hor_offset + map_hor_dist * i);
+                temp_end_x = temp_x + map_hor_dist;
+                //var temp_x = (int)(map_hor_start + map_hor_offset + (diff / collumns) * i);
+                var temp_y = (int)(map_vert_start + map_vert_offset + ((map_vert_end - map_vert_offset*2) / rows) * temp_curr_row);
 
                 
 
@@ -185,23 +247,23 @@ public sealed class Scr_MapController : MonoBehaviour {
         nodeIdStash.Set(entityLast, new MapNodeIdComponent { node_id = temp_node_count });
         nodePosStash.Set(entityLast, new MapNodePositionComponent
         {
-            node_x = map_offset_end - map_offset,
-            node_y = 540,
+            node_x = temp_end_x,
+            node_y = map_vert_end / 2,
             node_collumn = collumns + 1,
             node_row = rows / 2
         });
 
+        total_lenght = temp_end_x - first_x + map_hor_offset;
 
         nodeWorld.Commit();
+        #endregion
 
+        // ----------------------------------- Second walkthrough - create connections between nodes
+        Debug.LogWarning("----------------------------------- Second walkthrough - create connections between nodes");
 
-        // ----------------------------------- Second walkthrough - create connections between nodes and give propper offset
-        Debug.LogWarning("----------------------------------- Second walkthrough - create connections between nodes and give propper offset");
+        #region
 
         nodeNeighbStash.Set(entityFirst, new MapNodeNeighboursComponent { node_neighbours = new List<byte>() });
-
-        List<Entity> prev_collumn_entities = new List<Entity>();
-        List<Entity> current_collumn_entities = new List<Entity>();
 
 
         Debug.Log(".......................................GENERATING CLEAR CONNECTIONS.......................................");
@@ -378,27 +440,21 @@ public sealed class Scr_MapController : MonoBehaviour {
 
 
 
-        Debug.Log(".......................................GETTING RID OF DEAD ENDS AND GIVING OFFSET.......................................");
-        // SECOND WALKTHROUGH TO GET RID OF DEAD ENDS AND GIVE OFFSET
+        Debug.Log(".......................................GETTING RID OF DEAD ENDS.......................................");
+        // SECOND WALKTHROUGH TO GET RID OF DEAD ENDS
 
-
-        // pre loop preparations, look at first few lines with entities lists to understand this logic
-        //current_collumn_entities.Clear();
-        //prev_collumn_entities = SearchForEntitiesOfCollumn(0);
-        //current_collumn_entities = SearchForEntitiesOfCollumn(0);
-        List<Entity> next_collumn_entities = new List<Entity>();
 
         for (byte i = 1; i <= collumns; i++)
         {
-            Debug.Log($"_______________ forcing connection on collumn {i} _______________");
-            Debug.Log("_____ prev collumn _____");
+            //Debug.Log($"_______________ forcing connection on collumn {i} _______________");
+            //Debug.Log("_____ prev collumn _____");
             prev_collumn_entities = SearchForEntitiesOfCollumn((byte)(i - 1));
 
-            Debug.Log("_____ curr collumn _____");
+            //Debug.Log("_____ curr collumn _____");
             // need to fill current_collumn_entities list with entities of current collumn
             current_collumn_entities = SearchForEntitiesOfCollumn(i);
 
-            Debug.Log("_____ next collumn _____");
+            //Debug.Log("_____ next collumn _____");
             // need to fill current_collumn_entities list with entities of current collumn
             next_collumn_entities = SearchForEntitiesOfCollumn((byte)(i + 1));
 
@@ -489,12 +545,361 @@ public sealed class Scr_MapController : MonoBehaviour {
         }
 
         nodeWorld.Commit();
+        #endregion
+
+        // ----------------------------------- Third walkthrough - give propper offset
+        Debug.LogWarning("----------------------------------- Third walkthrough -  give propper offset");
+
+        #region
+
+        //Debug.Log(".......................................GIVING OFFSET.......................................");
+        // THIRD WALKTHROUGH TO GIVE OFFSET
+
+
+        // the base logic for giving offset is to find all connected neighbours rows and find the average row value between them
+        // this logic MUST include the start row of the node itself
+        for (byte i = 1; i <= collumns; i++)
+        {
+            //Debug.Log($"_______________ giving offset on collumn {i} _______________");
+            //Debug.Log("_____ prev collumn _____");
+            prev_collumn_entities = SearchForEntitiesOfCollumn((byte)(i - 1));
+            
+            //Debug.Log("_____ curr collumn _____");
+            // need to fill current_collumn_entities list with entities of current collumn
+            current_collumn_entities = SearchForEntitiesOfCollumn(i);
+
+            //Debug.Log("_____ next collumn _____");
+            // need to fill current_collumn_entities list with entities of current collumn
+            next_collumn_entities = SearchForEntitiesOfCollumn((byte)(i + 1));
 
 
 
-        // ----------------------------------- Third walkthrough - give specific types of events to all nodes
+            foreach (var entity in current_collumn_entities)
+            {
+                // get current entity info
+                ref var nodeCurrNeighbComponent = ref nodeNeighbStash.Get(entity);
+                ref var nodeCurrPosComponent = ref nodePosStash.Get(entity);
+                ref var nodeCurrIdComponent = ref nodeIdStash.Get(entity);
+
+                Debug.Log($"------------------------- getting offset for {nodeCurrIdComponent.node_id} -------------------------");
+
+                float temp_row_summ = nodeCurrPosComponent.node_row;
+                float temp_neighb_count = nodeCurrNeighbComponent.node_neighbours.Count + 1; // +1 since the initial row MUST be counted
+
+                Debug.Log($"------------------------- CURRENT    row summ {temp_row_summ} and neighb count {temp_neighb_count}-------------------------");
+
+                var temp_prev_summ = GetRowSummOfNeighbours(prev_collumn_entities, nodeCurrNeighbComponent, nodeCurrPosComponent.node_row);
+                temp_row_summ += temp_prev_summ;
+
+                Debug.Log($"------------------------- AFTER PREV row summ {temp_row_summ} and neighb count {temp_neighb_count}-------------------------");
+
+                var temp_next_summ = GetRowSummOfNeighbours(next_collumn_entities, nodeCurrNeighbComponent, nodeCurrPosComponent.node_row);
+                temp_row_summ += temp_next_summ;
+
+                Debug.Log($"------------------------- AFTER NEXT row summ {temp_row_summ} and neighb count {temp_neighb_count}-------------------------");
+
+                // find the average row
+                var temp_average_row = temp_row_summ / temp_neighb_count;
+
+                Debug.Log($"------------------------- average row {temp_average_row} -------------------------");
+
+                //var temp_y = (int)(map_vert_start + map_vert_offset + ((map_vert_end - map_vert_offset * 2) / rows) * temp_curr_row);
+                var temp_y_correct = map_vert_start + map_vert_offset + ((map_vert_end - map_vert_offset * 2) / rows) * (temp_average_row);
+                var temp_offset_rand = Random.Range(-map_vert_random_max, map_vert_random_max) * map_vert_random_increase;
+
+                var temp_y_end_pos = temp_y_correct + temp_offset_rand; 
+                temp_y_end_pos = Math.Clamp(temp_y_end_pos, map_vert_start + map_vert_offset, map_vert_end - map_vert_offset);
+
+                var temp_y_offset = (int)((temp_y_end_pos - nodeCurrPosComponent.node_y) * map_vert_pull_strenght);
+
+                Debug.Log($"------------------------- current y {nodeCurrPosComponent.node_y} -------------------------");
+                Debug.Log($"------------------------- correct y {temp_y_correct} -------------------------");
+                Debug.Log($"------------------------- randome y {temp_offset_rand} -------------------------");
+                Debug.Log($"------------------------- endpose y {temp_y_end_pos} -------------------------");
+                Debug.Log($"------------------------- !FINAL! y {temp_y_offset/ map_vert_pull_strenght} * {map_vert_pull_strenght} = {temp_y_offset} -------------------------");
+
+                nodeCurrPosComponent.node_y_offset = temp_y_offset;
 
 
+
+                var temp_x_offset = Random.Range(-map_hor_random_max, map_hor_random_max) * map_hor_random_increase;
+                
+
+                nodeCurrPosComponent.node_x_offset = temp_x_offset;
+            }
+        }
+
+
+
+
+        nodeWorld.Commit();
+        #endregion
+
+        // ----------------------------------- Fourth walkthrough - get rid of icon intersections
+        Debug.LogWarning("----------------------------------- Fourth walkthrough - get rid of icon intersections");
+
+        #region
+
+
+        for (byte i = 1; i <= collumns + 1; i++)
+        {
+            // need to fill current_collumn_entities list with entities of current collumn
+            current_collumn_entities = SearchForEntitiesOfCollumn(i);
+
+
+            foreach (var entity in current_collumn_entities)
+            {
+
+                var temp_else_entities = SearchForEntitiesOfCollumn(i);
+                temp_else_entities.Remove(entity);
+
+
+                ref var nodeIdComponent = ref nodeIdStash.Get(entity);
+                ref var nodePosComponent = ref nodePosStash.Get(entity);
+                var total_curr_y = nodePosComponent.node_y_offset + nodePosComponent.node_y;
+                var debug_flag = false;
+
+
+                if (temp_else_entities.Count != 0)
+                {
+                    foreach (var else_entity in temp_else_entities)
+                    {
+                        ref var nodeElseIdComponent = ref nodeIdStash.Get(else_entity);
+                        ref var nodeElsePosComponent = ref nodePosStash.Get(else_entity);
+                        var total_else_y = nodeElsePosComponent.node_y_offset + nodeElsePosComponent.node_y;
+
+
+                        if ((total_else_y >= total_curr_y - (icon_bounding_box_width + icon_bounding_box_width / 2))
+                        && (total_else_y <= total_curr_y + (icon_bounding_box_width + icon_bounding_box_width / 2)))
+                        {
+                            Debug.Log($"__________ ICON INTERSECTION AT CURR ID   {nodeIdComponent.node_id}  and ELSE ID  {nodeElseIdComponent.node_id}");
+                            debug_flag = true;
+                            Debug.Log($" PRE change curr Y POS:  {total_curr_y}  ");
+                            Debug.Log($" PRE change else Y POS:  {total_else_y}  ");
+
+                            // curr y pos is belowe the middle
+                            if (total_curr_y <= (map_vert_end + map_vert_start) / 2)
+                            {
+                                // curr y pos is belowe the other y pos
+                                if (total_curr_y < total_else_y)
+                                {
+                                    total_curr_y -= (int)(icon_bounding_box_width * 0.5);
+                                    total_else_y += (int)(icon_bounding_box_width * 0.5);
+                                }
+                                // curr y pos is above the other y pos
+                                else
+                                {
+                                    total_curr_y += (int)(icon_bounding_box_width * 0.5);
+                                    total_else_y -= (int)(icon_bounding_box_width * 0.5);
+                                }
+                            }
+                            // curr y pos is above the middle
+                            else
+                            {
+                                // curr y pos is belowe the other y pos
+                                if (total_curr_y < total_else_y)
+                                {
+                                    total_curr_y -= (int)(icon_bounding_box_width * 0.5);
+                                    total_else_y += (int)(icon_bounding_box_width * 0.5);
+                                }
+                                // curr y pos is above the other y pos
+                                else
+                                {
+                                    total_curr_y += (int)(icon_bounding_box_width * 0.5);
+                                    total_else_y -= (int)(icon_bounding_box_width * 0.5);
+                                }
+                            }
+
+                        }
+
+
+                        total_else_y = Math.Clamp(total_else_y, map_vert_start + map_vert_offset, map_vert_end - map_vert_offset);
+
+                        if (debug_flag)
+                        {
+                            Debug.Log($" TOTAL ELSE Y POS:  {total_else_y}  ");
+                            Debug.Log($" FINAL ELSE Y POS:  {total_else_y - nodeElsePosComponent.node_y_offset}  ");
+                        }
+
+                        nodeElsePosComponent.node_y = total_else_y - nodeElsePosComponent.node_y_offset;
+                    }
+                }
+
+
+                total_curr_y = Math.Clamp(total_curr_y, map_vert_start + map_vert_offset, map_vert_end - map_vert_offset);
+
+                if (debug_flag)
+                {
+                    Debug.Log($" TOTAL CURR Y POS:  {total_curr_y}  ");
+                    Debug.Log($" FINAL CURR Y POS:  {total_curr_y - nodePosComponent.node_y_offset}  ");
+                }
+
+                nodePosComponent.node_y = total_curr_y - nodePosComponent.node_y_offset;
+
+            }
+
+        }
+
+
+        nodeWorld.Commit();
+        #endregion
+
+
+        // ----------------------------------- Fifthfth walkthrough - create the Back Ground 
+        Debug.LogWarning("----------------------------------- Fifthfth walkthrough - create the Back Ground");
+
+        #region
+
+
+        // layer -10 : Two Base BGs to fill the space before the map itself, the second one is inverted by X
+        bgStash = nodeWorld.GetStash<MapBGComponent>();
+
+        var bg_entity = nodeWorld.CreateEntity();
+        bgStash.Set(bg_entity, new MapBGComponent 
+        { 
+            sprite = bg_big_sprite, 
+            pos_x = (int)(bg_big_sprite.rect.width/2), 
+            pos_y = whole_map_middle_y_point, 
+            scale_x = 1,
+            layer = -10
+        });
+
+        bg_entity = nodeWorld.CreateEntity();
+        bgStash.Set(bg_entity, new MapBGComponent
+        {
+            sprite = bg_big_sprite,
+            pos_x = (int)(bg_big_sprite.rect.width + bg_big_sprite.rect.width / 2),
+            pos_y = whole_map_middle_y_point,
+            scale_x = -1,
+            layer = -10
+        });
+
+        //var scaleChange = new Vector3(-1f, 1f, 1f);
+        //Instantiate(UIBGPrefab, new Vector3(500, 180, 0), Quaternion.identity);
+        //Instantiate(UIBGPrefab, new Vector3(1500, 180, 0), Quaternion.identity).transform.localScale = scaleChange;
+
+
+
+        // layer -9 : Start of Map Scroll
+        var scroll_start = bg_beginning_of_scroll + bg_startend_lenght / 2;
+        bg_entity = nodeWorld.CreateEntity();
+        bgStash.Set(bg_entity, new MapBGComponent
+        {
+            sprite = bg_start_sprite,
+            pos_x = scroll_start,
+            pos_y = whole_map_middle_y_point,
+            scale_x = 1,
+            layer = -9
+        });
+        //Instantiate(UIMapStartPrefab, new Vector3(scroll_start, 180, 0), Quaternion.identity);
+
+
+        // layer -8 : Segments of Map Scroll
+        // first segment
+        var segment_start = scroll_start + bg_startend_lenght / 2 + bg_segment_lenght / 2;
+        var segment_spr_count = bg_segment_sprites.Count;
+        var rand_spr_id = (byte)Random.Range(0, segment_spr_count);
+        var excluded_spr_id = rand_spr_id;
+
+        bg_entity = nodeWorld.CreateEntity();
+        bgStash.Set(bg_entity, new MapBGComponent
+        {
+            sprite = bg_segment_sprites[rand_spr_id],
+            pos_x = segment_start,
+            pos_y = whole_map_middle_y_point,
+            scale_x = 1,
+            layer = -8
+        });
+
+        //var segment_first = Instantiate(UIMapSegmentPrefab, new Vector3(segment_start, 180, 0), Quaternion.identity);
+        //var segment_spr_count = segment_first.GetComponent<Scr_MapVisualSegment>().sprites.Count;
+
+        //segment_first.GetComponent<Scr_MapVisualSegment>().SpriteUpdate(rand_spr_id);
+
+        // count the total numb of segments, using total lenght minus the already added first segment
+        var segment_count = Math.Ceiling((double)(total_lenght / bg_segment_lenght) - 1);
+        var latest_x = segment_start + bg_segment_lenght;
+        for (byte i = 0; i < segment_count; i++)
+        {
+            // instantiate a segment
+            //var segment = Instantiate(UIMapSegmentPrefab, new Vector3(latest_x, 180, 0), Quaternion.identity);
+
+            // roll for valid sprite id, that means not an id that was in the previous segment
+            while (true)
+            {
+                rand_spr_id = (byte)Random.Range(0, segment_spr_count);
+                if (rand_spr_id != excluded_spr_id)
+                {
+                    excluded_spr_id = rand_spr_id;
+                    break;
+                }
+            }
+
+            bg_entity = nodeWorld.CreateEntity();
+            bgStash.Set(bg_entity, new MapBGComponent
+            {
+                sprite = bg_segment_sprites[rand_spr_id],
+                pos_x = latest_x,
+                pos_y = whole_map_middle_y_point,
+                scale_x = 1,
+                layer = -8
+            });
+
+            // add total coordinates count
+            latest_x += bg_segment_lenght;
+        }
+
+        // layer -9 : End of Map Scroll
+        //Instantiate(UIMapEndPrefab, new Vector3(latest_x - bg_segment_lenght/2 + bg_startend_lenght / 2, 180, 0), Quaternion.identity);
+
+        var scroll_end = latest_x - bg_segment_lenght / 2 + bg_startend_lenght / 2;
+        bg_entity = nodeWorld.CreateEntity();
+        bgStash.Set(bg_entity, new MapBGComponent
+        {
+            sprite = bg_end_sprite,
+            pos_x = scroll_end,
+            pos_y = whole_map_middle_y_point,
+            scale_x = 1,
+            layer = -9
+        });
+
+
+
+        nodeWorld.Commit();
+        #endregion
+
+
+        // ----------------------------------- Sixth micro walkthrough - centrilize all of the nodes closer to center of map scroll 
+        Debug.LogWarning("----------------------------------- Sixth micro walkthrough - centrilize all of the nodes closer to center of map scroll");
+
+        #region
+
+        var total_bg_distance = scroll_end - scroll_start;
+        var scroll_bg_diff = total_bg_distance - total_lenght;
+        var final_x_adjustment = scroll_bg_diff/2;
+
+        foreach (var entity in filterPos)
+        {
+
+            ref var nodePosComponent = ref nodePosStash.Get(entity);
+            nodePosComponent.node_x_offset += final_x_adjustment;
+
+        }
+
+
+        nodeWorld.Commit();
+        #endregion
+
+
+        // ----------------------------------- Seventh walkthrough - give specific types of events to all nodes
+        Debug.LogWarning("----------------------------------- Seventh walkthrough - give specific types of events to all nodes");
+
+        #region
+
+
+
+        nodeWorld.Commit();
+        #endregion
 
 
         MapUpdate();
@@ -506,6 +911,41 @@ public sealed class Scr_MapController : MonoBehaviour {
         List<byte> add_neighbours = NeighbComponent.node_neighbours;
         add_neighbours.Add(id_to_add.node_id);
         NeighbComponent.node_neighbours = add_neighbours;
+    }
+
+    private float GetRowSummOfNeighbours(List<Entity> collumn_entities, MapNodeNeighboursComponent nodeCurrNeighbComponent, int currRow)
+    {
+
+        float temp_row_summ = 0;
+
+        foreach (var entity in collumn_entities)
+        {
+            ref var nodePrevIdComponent = ref nodeIdStash.Get(entity);
+            ref var nodePrevPosComponent = ref nodePosStash.Get(entity);
+
+            if (nodeCurrNeighbComponent.node_neighbours.Contains(nodePrevIdComponent.node_id))
+            {
+
+                // if its the adjacent row then add only half the value? Potential fix for the overlaping of nodes
+                if (Math.Abs(nodePrevPosComponent.node_row - currRow) == 1)
+                {
+                    // 3 - (3 - 2) * 0.5 = 3 - 0.5 = 2.5
+                    // 1 - (1 - 2) * 0.5 = 1 + 0.5 = 1.5
+                    // 2 - (2 - 1) * 0.5 = 2 - 0.5 = 1.5
+                    temp_row_summ += nodePrevPosComponent.node_row - (nodePrevPosComponent.node_row - currRow) * 0.5f;
+
+                }
+                else
+                {
+
+                    temp_row_summ += nodePrevPosComponent.node_row;
+
+                }
+            }
+
+        }
+
+        return temp_row_summ;
     }
 
 
@@ -590,7 +1030,7 @@ public sealed class Scr_MapController : MonoBehaviour {
 
     private List<Entity> SearchForEntitiesOfCollumn(byte collumn)
     {
-        Debug.Log($"---------- searching for entities in collumn _{collumn}_ ----------");
+        //Debug.Log($"---------- searching for entities in collumn _{collumn}_ ----------");
 
         //this.filterPos = this.nodeWorld.Filter.With<MapNodePositionComponent>().Build();
 
@@ -612,7 +1052,7 @@ public sealed class Scr_MapController : MonoBehaviour {
 
         string combinedString = string.Join(",", debug_log.ToArray());
 
-        Debug.Log($"---------- result : _{combinedString}_");
+        //Debug.Log($"---------- result : _{combinedString}_");
 
 
         return result;
